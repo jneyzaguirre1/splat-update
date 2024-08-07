@@ -42,7 +42,8 @@ class SceneInfo(NamedTuple):
     nerf_normalization: dict
     ply_path: str
 
-def getNerfppNorm(cam_info):
+# added simulation argument
+def getNerfppNorm(cam_info, sim=False):
     def get_center_and_diag(cam_centers):
         cam_centers = np.hstack(cam_centers)
         avg_cam_center = np.mean(cam_centers, axis=1, keepdims=True)
@@ -54,9 +55,12 @@ def getNerfppNorm(cam_info):
     cam_centers = []
 
     for cam in cam_info:
-        W2C = getWorld2View2(cam.R, cam.T)
-        C2W = np.linalg.inv(W2C)
-        cam_centers.append(C2W[:3, 3:4])
+        if sim:
+            cam_centers.append(cam.extrinsics[:3, 3])
+        else:
+            W2C = getWorld2View2(cam.R, cam.T)
+            C2W = np.linalg.inv(W2C)
+            cam_centers.append(C2W[:3, 3:4])
 
     center, diagonal = get_center_and_diag(cam_centers)
     radius = diagonal * 1.1
@@ -181,6 +185,28 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
                            ply_path=ply_path)
     return scene_info
 
+# added simulation reader
+def readSimInfo(sim_env, args):
+
+    gaussian_init_num = args.width * args.height * args.cam_num
+    if gaussian_init_num > args.max_initial_pc:
+        sampler = gaussian_init_num / (args.max_initial_p * args.cam_num)
+    else:
+        sampler = args.width * args.height
+
+    for cam_id, camera in enumerate(sim_env.cameras):
+        rgb, depth, seg = sim_env.capture_images(cam_id)
+        pcd = images_to_point_cloud(rgb, depth, seg, camera.intrinsics, camera.extrinscis, sampler)
+
+    nerf_normalization = getNerfppNorm(sim_env.cameras, sim=True)
+
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=sim_env.cameras,
+                           test_cameras=[],
+                           nerf_normalization=nerf_normalization,
+                           ply_path="")
+    return scene_info
+
 def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png"):
     cam_infos = []
 
@@ -265,7 +291,55 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
                            ply_path=ply_path)
     return scene_info
 
+def images_to_point_cloud(RGB, depth_image, segmentation, intrinsics, extrinsics, sample=None):
+        """
+        Convert a depth image to a point cloud.
+        
+        Parameters:
+        - depth_image: 2D numpy array with depth values
+        - intrinsics: array of size (3, 3)
+        
+        Returns:
+        - point_cloud: Nx3 numpy array with 3D points in the camera coordinate system
+        """
+        fx = intrinsics[0, 0]
+        fy = intrinsics[1, 1]
+        cx = intrinsics[0, 2]
+        cy = intrinsics[1, 2]
+        
+        height, width = depth_image.shape
+        i, j = np.meshgrid(np.arange(width), np.arange(height), indexing='xy')
+        
+        # Convert pixel coordinates to normalized camera coordinates
+        x = (i - cx) / fx
+        y = (j - cy) / fy
+        
+        # Flatten the arrays
+        x = x.flatten()
+        y = y.flatten()
+        depth = depth_image.flatten()
+        
+        # Compute the 3D points
+        X = x * depth
+        Y = y * depth
+        Z = depth
+        
+        # Stack the 3D points into a Nx3 array
+        positions = np.vstack((X, Y, Z)).T
+        colors = RGB.reshape(-1, 3)
+        normals = np.randint(0, 1, colors.shape)
+
+        if sample is not None:
+            idxs = np.random.randint(0, positions.shape[0], sample)
+            positions = positions[idxs]
+            colors = colors[idxs]
+            normals = normals[idxs]
+        
+        return BasicPointCloud(points=positions, colors=colors, normals=normals)
+
+# Added simulation reader
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
-    "Blender" : readNerfSyntheticInfo
+    "Blender" : readNerfSyntheticInfo,
+    "Sim"   : readSimInfo
 }

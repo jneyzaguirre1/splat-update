@@ -84,7 +84,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
-        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+
+        cam_id = randint(0, len(viewpoint_stack)-1)
+        viewpoint_cam = viewpoint_stack.pop(cam_id)
         
         # Render
         if (iteration - 1) == debug_from:
@@ -94,11 +96,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
         # Loss
         if opt.include_feature:
-            gt_language_feature, language_feature_mask = viewpoint_cam.get_language_feature(language_feature_dir=dataset.lf_path, feature_level=dataset.feature_level)
+            if dataset.sim:
+                rgb, depth, seg = scene.sim_env.capture_image_torch(cam_id)
+                # TODO: get the segmentation to work as langsplat.
+                # gt_language_feature, language_feature_mask = 
+            else:
+                gt_language_feature, language_feature_mask = viewpoint_cam.get_language_feature(language_feature_dir=dataset.lf_path, feature_level=dataset.feature_level)
             Ll1 = l1_loss(language_feature*language_feature_mask, gt_language_feature*language_feature_mask)            
             loss = Ll1
         else:
-            gt_image = viewpoint_cam.original_image.cuda()
+            if dataset.sim:
+                rgb, depth, seg = scene.sim_env.capture_image_torch(cam_id)
+                gt_image = rgb.cuda()
+            else:
+                gt_image = viewpoint_cam.original_image.cuda()
             Ll1 = l1_loss(image, gt_image)
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         loss.backward()

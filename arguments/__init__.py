@@ -12,6 +12,7 @@
 from argparse import ArgumentParser, Namespace
 import sys
 import os
+import numpy as np
 
 class GroupParams:
     pass
@@ -56,6 +57,13 @@ class ModelParams(ParamGroup):
         self._feature_level = -1
         self.data_device = "cuda"
         self.eval = False
+        # added parameters
+        self.sim = True
+        self.cam_num = 15
+        self.urdf_path = "./scene/kinova.urdf"
+        self.width = 640
+        self.height = 480
+        self.max_initial_pc = 40000
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
